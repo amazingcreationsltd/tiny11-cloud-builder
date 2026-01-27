@@ -1,37 +1,297 @@
-name: Build Tiny11 in Cloud
+name: Build Tiny11 ISO
 
 on:
   workflow_dispatch:
+    inputs:
+      windows_edition_index:
+        description: 'Windows Edition Index (1=Home, 6=Pro)'
+        required: true
+        default: '6'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
 
 jobs:
-  build:
+  build-tiny11:
     runs-on: windows-latest
-    timeout-minutes: 360
-
+    timeout-minutes: 180  # 3 hours max
+    
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      # Step 1: Check available disk space
+      - name: Check initial disk space
+        shell: powershell
+        run: |
+          Write-Host "=== Initial Disk Space ===" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free, @{Name='Total';Expression={$_.Used + $_.Free}} | Format-Table -AutoSize
 
-    - name: Install gdown
-      run: pip install gdown
+      # Step 2: Free up disk space (critical for Windows runner)
+      - name: Free up disk space
+        shell: powershell
+        run: |
+          Write-Host "=== Cleaning up disk space ===" -ForegroundColor Yellow
+          
+          # Remove unnecessary software to free ~15-20GB
+          Write-Host "Removing .NET SDKs..."
+          Remove-Item -Path "C:\Program Files\dotnet" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Removing Android SDK..."
+          Remove-Item -Path "$env:ANDROID_HOME" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Removing CodeQL..."
+          Remove-Item -Path "$env:AGENT_TOOLSDIRECTORY\CodeQL" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Removing Java..."
+          Remove-Item -Path "C:\hostedtoolcache\windows\Java*" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Removing Haskell..."
+          Remove-Item -Path "C:\ProgramData\chocolatey\lib\ghc" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Removing cached Docker images..."
+          docker system prune -a -f 2>$null
+          
+          Write-Host "Cleaning temp directories..."
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "`n=== Disk space after cleanup ===" -ForegroundColor Green
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, Used, Free, @{Name='Total';Expression={$_.Used + $_.Free}} | Format-Table -AutoSize
 
-    - name: Download Windows 11 ISO from Google Drive
-      run: |
-        mkdir iso
-        gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
+      # Step 3: Install rclone for Google Drive access
+      - name: Install rclone
+        shell: powershell
+        run: |
+          Write-Host "=== Installing rclone ===" -ForegroundColor Cyan
+          choco install rclone -y
+          rclone version
 
-    - name: Clone tiny11builder
-      run: git clone https://github.com/ntdevlabs/tiny11builder.git
+      # Step 4: Configure rclone for Google Drive
+      - name: Configure rclone for Google Drive
+        shell: powershell
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+        run: |
+          Write-Host "=== Configuring rclone ===" -ForegroundColor Cyan
+          
+          # Create rclone config directory
+          $configDir = "$env:USERPROFILE\.config\rclone"
+          New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+          
+          # Write rclone config from secret
+          $configPath = "$configDir\rclone.conf"
+          $env:RCLONE_CONFIG | Out-File -FilePath $configPath -Encoding UTF8
+          
+          Write-Host "✓ rclone configured successfully"
+          Write-Host "Testing Google Drive connection..."
+          rclone lsd gdrive:
 
-    - name: Run Tiny11 Builder
-      shell: powershell
-      run: |
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        cd tiny11builder
-        .\tiny11maker.ps1
+      # Step 5: Download Windows 11 ISO from Google Drive
+      - name: Download Windows 11 ISO
+        shell: powershell
+        run: |
+          Write-Host "=== Downloading Windows 11 ISO from Google Drive ===" -ForegroundColor Cyan
+          
+          # Create work directory on D: drive (faster temp storage)
+          $workDir = "D:\tiny11_work"
+          New-Item -ItemType Directory -Path $workDir -Force | Out-Null
+          
+          # Download ISO using rclone with Google Drive file ID
+          $fileId = "1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC"
+          $isoPath = "$workDir\Win11_25H2_English_x64.iso"
+          
+          Write-Host "Downloading ISO (this may take 20-30 minutes)..."
+          rclone copy "gdrive:VMWare and Windows 11/Win11_25H2_English_x64.iso" "$workDir\" --progress --transfers 1
+          
+          if (Test-Path $isoPath) {
+              $size = (Get-Item $isoPath).Length / 1GB
+              Write-Host "✓ ISO downloaded successfully! Size: $([math]::Round($size, 2)) GB" -ForegroundColor Green
+          } else {
+              Write-Error "❌ Failed to download ISO!"
+              exit 1
+          }
 
-    - name: Upload Tiny11 ISO artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Tiny11-ISO
-        path: tiny11builder\*.iso
+      # Step 6: Clone tiny11builder repository
+      - name: Clone tiny11builder repository
+        shell: powershell
+        run: |
+          Write-Host "=== Cloning tiny11builder repository ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          cd $workDir
+          
+          git clone https://github.com/ntdevlabs/tiny11builder.git
+          
+          if (Test-Path "$workDir\tiny11builder\tiny11maker.ps1") {
+              Write-Host "✓ Repository cloned successfully!" -ForegroundColor Green
+          } else {
+              Write-Error "❌ Failed to clone repository!"
+              exit 1
+          }
+
+      # Step 7: Mount Windows 11 ISO
+      - name: Mount Windows 11 ISO
+        shell: powershell
+        run: |
+          Write-Host "=== Mounting Windows 11 ISO ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          $isoPath = "$workDir\Win11_25H2_English_x64.iso"
+          
+          # Mount ISO
+          $mountResult = Mount-DiskImage -ImagePath $isoPath -PassThru
+          $driveLetter = ($mountResult | Get-Volume).DriveLetter
+          
+          Write-Host "✓ ISO mounted successfully at drive: $driveLetter`:" -ForegroundColor Green
+          
+          # Save drive letter for next steps
+          "$driveLetter" | Out-File -FilePath "$workDir\drive_letter.txt" -Encoding UTF8
+          
+          # Verify install.wim or install.esd exists
+          if (Test-Path "$($driveLetter):\sources\install.wim") {
+              Write-Host "✓ Found install.wim" -ForegroundColor Green
+          } elseif (Test-Path "$($driveLetter):\sources\install.esd") {
+              Write-Host "✓ Found install.esd" -ForegroundColor Green
+          } else {
+              Write-Error "❌ Neither install.wim nor install.esd found!"
+              exit 1
+          }
+
+      # Step 8: Run tiny11maker.ps1
+      - name: Build Tiny11
+        shell: powershell
+        run: |
+          Write-Host "=== Building Tiny11 ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          $scriptPath = "$workDir\tiny11builder\tiny11maker.ps1"
+          $driveLetter = Get-Content "$workDir\drive_letter.txt"
+          
+          Write-Host "ISO Drive: $driveLetter`:"
+          Write-Host "Scratch Drive: D"
+          Write-Host "Windows Edition Index: ${{ github.event.inputs.windows_edition_index }}"
+          Write-Host ""
+          Write-Host "⚠️  This process will take 60-90 minutes..." -ForegroundColor Yellow
+          Write-Host ""
+          
+          # Change to script directory
+          cd "$workDir\tiny11builder"
+          
+          # Set execution policy
+          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+          
+          # Run the script with parameters
+          # Note: tiny11maker.ps1 has interactive prompts, so we'll need to pipe inputs
+          $inputs = @(
+              $driveLetter                                    # ISO drive letter
+              "${{ github.event.inputs.windows_edition_index }}"  # Windows edition index
+          )
+          
+          $inputs | & $scriptPath -ISO $driveLetter -SCRATCH "D"
+          
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
+              Write-Error "❌ tiny11maker.ps1 failed with exit code: $LASTEXITCODE"
+              exit 1
+          }
+          
+          Write-Host ""
+          Write-Host "✓ Tiny11 build completed!" -ForegroundColor Green
+
+      # Step 9: Verify output ISO
+      - name: Verify Tiny11 ISO
+        shell: powershell
+        run: |
+          Write-Host "=== Verifying Tiny11 ISO ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          $isoPath = "$workDir\tiny11builder\tiny11.iso"
+          
+          if (Test-Path $isoPath) {
+              $size = (Get-Item $isoPath).Length / 1GB
+              Write-Host "✓ Tiny11 ISO created successfully!" -ForegroundColor Green
+              Write-Host "   Location: $isoPath"
+              Write-Host "   Size: $([math]::Round($size, 2)) GB"
+          } else {
+              Write-Error "❌ Tiny11 ISO not found!"
+              exit 1
+          }
+
+      # Step 10: Upload Tiny11 ISO to Google Drive
+      - name: Upload Tiny11 ISO to Google Drive
+        shell: powershell
+        run: |
+          Write-Host "=== Uploading Tiny11 ISO to Google Drive ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          $isoPath = "$workDir\tiny11builder\tiny11.iso"
+          $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+          $outputName = "tiny11_25H2_$timestamp.iso"
+          
+          Write-Host "Uploading to: gdrive:Tiny 11/$outputName"
+          Write-Host "This may take 20-40 minutes..."
+          
+          # Create destination folder if it doesn't exist
+          rclone mkdir "gdrive:Tiny 11"
+          
+          # Upload ISO
+          rclone copy $isoPath "gdrive:Tiny 11/" --progress --transfers 1 --stats 30s
+          
+          # Rename to timestamped name
+          rclone moveto "gdrive:Tiny 11/tiny11.iso" "gdrive:Tiny 11/$outputName"
+          
+          Write-Host ""
+          Write-Host "✓ Upload completed successfully!" -ForegroundColor Green
+          Write-Host "   Your Tiny11 ISO is now available at: Tiny 11/$outputName"
+
+      # Step 11: Cleanup
+      - name: Cleanup
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "=== Cleaning up ===" -ForegroundColor Cyan
+          
+          $workDir = "D:\tiny11_work"
+          
+          # Unmount ISO if still mounted
+          $isoPath = "$workDir\Win11_25H2_English_x64.iso"
+          if (Test-Path $isoPath) {
+              Dismount-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue
+          }
+          
+          # Remove work directory
+          if (Test-Path $workDir) {
+              Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          
+          Write-Host "✓ Cleanup completed" -ForegroundColor Green
+
+      # Step 12: Summary
+      - name: Build Summary
+        if: success()
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "╔════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║         🎉 Tiny11 Build Completed Successfully! 🎉        ║" -ForegroundColor Green
+          Write-Host "╚════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Your Tiny11 ISO has been created and uploaded to Google Drive!" -ForegroundColor Cyan
+          Write-Host ""
+          Write-Host "Location: Google Drive > Tiny 11 folder" -ForegroundColor White
+          Write-Host ""
+          Write-Host "What was done:" -ForegroundColor Yellow
+          Write-Host "  ✓ Downloaded Windows 11 ISO from Google Drive"
+          Write-Host "  ✓ Removed bloatware (Edge, OneDrive, Teams, etc.)"
+          Write-Host "  ✓ Applied registry modifications (TPM bypass, telemetry disable)"
+          Write-Host "  ✓ Created bootable Tiny11 ISO"
+          Write-Host "  ✓ Uploaded to Google Drive"
+          Write-Host ""
+          Write-Host "Next steps:" -ForegroundColor Yellow
+          Write-Host "  1. Download the ISO from your Google Drive 'Tiny 11' folder"
+          Write-Host "  2. Create a bootable USB using Rufus or Ventoy"
+          Write-Host "  3. Install Windows 11 Tiny"
+          Write-Host ""
+          Write-Host "Enjoy your lightweight Windows 11! 🚀" -ForegroundColor Green
