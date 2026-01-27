@@ -12,7 +12,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install Python gdown
+    - name: Install gdown
       run: pip install gdown
 
     - name: Download Windows 11 ISO from Google Drive
@@ -20,7 +20,7 @@ jobs:
         mkdir iso
         gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
 
-    - name: Verify ISO download
+    - name: Verify ISO
       run: |
         dir iso
         powershell -Command "(Get-Item iso\Win11.iso).Length"
@@ -28,21 +28,28 @@ jobs:
     - name: Clone tiny11builder
       run: git clone https://github.com/ntdevlabs/tiny11builder.git
 
-    - name: Run tiny11maker (auto mode)
+    - name: Mount ISO and build Tiny11
       shell: powershell
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
+
+        # Mount ISO
+        $mount = Mount-DiskImage -ImagePath "$PWD\iso\Win11.iso" -PassThru
+        Start-Sleep -Seconds 5
+
+        # Get drive letter
+        $driveLetter = ($mount | Get-Volume).DriveLetter
+        Write-Host "ISO mounted at drive $driveLetter"
+
+        # Run tiny11maker (auto answers)
         cd tiny11builder
+        echo 1`nY`nY | .\tiny11maker.ps1 $driveLetter
 
-        # Auto-answer prompts:
-        # 1 = Windows Pro (safe default)
-        # Y = continue
-        # Y = build
-        echo 1`nY`nY | .\tiny11maker.ps1 ..\iso\Win11.iso
+        # Dismount ISO
+        Dismount-DiskImage -ImagePath "$PWD\..\iso\Win11.iso"
 
-    - name: List generated ISO
-      run: |
-        dir tiny11builder
+    - name: List output ISO
+      run: dir tiny11builder
 
     - name: Upload Tiny11 ISO
       uses: actions/upload-artifact@v4
