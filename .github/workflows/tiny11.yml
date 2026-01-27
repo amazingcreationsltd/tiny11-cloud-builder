@@ -1,10 +1,10 @@
-name: Build Tiny11 (Cloud, Free)
+name: Build Tiny11 via UUP (Free Cloud)
 
 on:
   workflow_dispatch:
 
 jobs:
-  tiny11:
+  build:
     runs-on: windows-latest
     timeout-minutes: 360
 
@@ -12,13 +12,54 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Install gdown
-      run: pip install gdown
-
-    - name: Download Windows 11 ISO
+    - name: Prepare workspace
+      shell: powershell
       run: |
-        mkdir iso
-        gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
+        New-Item -ItemType Directory -Force -Path uup | Out-Null
+        New-Item -ItemType Directory -Force -Path iso | Out-Null
+
+    - name: Download UUP dump scripts
+      shell: powershell
+      run: |
+        Invoke-WebRequest `
+          https://github.com/uup-dump/uup-dump-cli/archive/refs/heads/master.zip `
+          -OutFile uupdump.zip
+        Expand-Archive uupdump.zip -DestinationPath uup
+        Remove-Item uupdump.zip
+
+    - name: Configure UUP build (Windows 11 Pro, x64)
+      shell: powershell
+      run: |
+        $cfg = @"
+        edition=professional
+        language=en-us
+        arch=amd64
+        build=latest
+        wim=yes
+        iso=yes
+        auto_start=yes
+        "@
+        $cfg | Out-File uup\config.conf -Encoding ascii
+
+    - name: Download Windows 11 UUP files
+      shell: powershell
+      run: |
+        cd uup\uup-dump-cli-master
+        .\uup_download_windows.cmd
+
+    - name: Build Windows 11 ISO from UUP
+      shell: powershell
+      run: |
+        cd uup\uup-dump-cli-master
+        .\uup_convert.cmd
+
+    - name: Locate generated ISO
+      shell: powershell
+      run: |
+        Get-ChildItem -Recurse -Filter *.iso
+        Copy-Item `
+          (Get-ChildItem -Recurse -Filter *.iso | Select-Object -First 1).FullName `
+          iso\Win11.iso
 
     - name: Mount ISO and run patched tiny11maker
       shell: powershell
@@ -31,8 +72,7 @@ jobs:
         $drive = ($disk | Get-Volume).DriveLetter
         Write-Host "ISO mounted at drive $drive"
 
-        # Run patched script (Windows Pro usually index 6)
-        echo 6`nY`nY | .\tiny11maker.ps1 $drive
+        echo 1`nY`nY | .\tiny11maker.ps1 $drive
 
         Dismount-DiskImage -ImagePath $isoPath
 
