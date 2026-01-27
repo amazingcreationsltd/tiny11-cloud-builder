@@ -20,15 +20,10 @@ jobs:
         mkdir iso
         gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
 
-    - name: Verify ISO
-      run: |
-        dir iso
-        powershell -Command "(Get-Item iso\Win11.iso).Length"
-
     - name: Clone tiny11builder
       run: git clone https://github.com/ntdevlabs/tiny11builder.git
 
-    - name: Mount ISO and build Tiny11
+    - name: Mount ISO, convert WIM → ESD, build Tiny11
       shell: powershell
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -36,14 +31,25 @@ jobs:
         # Mount ISO
         $mount = Mount-DiskImage -ImagePath "$PWD\iso\Win11.iso" -PassThru
         Start-Sleep -Seconds 5
+        $drive = ($mount | Get-Volume).DriveLetter
+        Write-Host "ISO mounted at drive $drive"
 
-        # Get drive letter
-        $driveLetter = ($mount | Get-Volume).DriveLetter
-        Write-Host "ISO mounted at drive $driveLetter"
+        # Copy ISO contents
+        robocopy "$drive`:\" "$PWD\win11" /E
 
-        # Run tiny11maker (auto answers)
+        # Convert install.wim → install.esd if needed
+        $wimPath = "$PWD\win11\sources\install.wim"
+        $esdPath = "$PWD\win11\sources\install.esd"
+
+        if (Test-Path $wimPath) {
+          Write-Host "Converting install.wim to install.esd"
+          dism /Export-Image /SourceImageFile:$wimPath /SourceIndex:1 /DestinationImageFile:$esdPath /Compress:recovery
+          Remove-Item $wimPath -Force
+        }
+
+        # Run tiny11maker
         cd tiny11builder
-        echo 1`nY`nY | .\tiny11maker.ps1 $driveLetter
+        echo 1`nY`nY | .\tiny11maker.ps1 "$PWD\..\win11"
 
         # Dismount ISO
         Dismount-DiskImage -ImagePath "$PWD\..\iso\Win11.iso"
