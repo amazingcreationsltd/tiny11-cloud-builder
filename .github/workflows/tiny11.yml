@@ -1,0 +1,37 @@
+name: Build Tiny11 in Cloud
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Install gdown
+      run: pip install gdown
+
+    - name: Download Windows 11 ISO from Google Drive
+      run: |
+        mkdir iso
+        gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
+
+    - name: Clone tiny11builder
+      run: git clone https://github.com/ntdevlabs/tiny11builder.git
+
+    - name: Run Tiny11 Builder
+      shell: powershell
+      run: |
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        cd tiny11builder
+        .\tiny11maker.ps1
+
+    - name: Upload Tiny11 ISO artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Tiny11-ISO
+        path: tiny11builder\*.iso
