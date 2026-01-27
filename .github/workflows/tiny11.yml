@@ -18,7 +18,7 @@ jobs:
     - name: Download Windows 11 ISO
       run: |
         mkdir iso
-        gdown --id 1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC -O iso/Win11.iso
+        gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
 
     - name: Mount ISO and run patched tiny11maker
       shell: powershell
