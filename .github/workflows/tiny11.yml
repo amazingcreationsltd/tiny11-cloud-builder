@@ -22,7 +22,7 @@ jobs:
       shell: powershell
       run: |
         Invoke-WebRequest `
-          https://github.com/uup-dump/uup-dump-cli/archive/refs/heads/master.zip `
+          https://github.com/uup-dump/cli/archive/refs/heads/master.zip `
           -OutFile uupdump.zip
         Expand-Archive uupdump.zip -DestinationPath uup
         Remove-Item uupdump.zip
