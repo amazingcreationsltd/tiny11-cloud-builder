@@ -4,18 +4,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-tiny11:
+  tiny11:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Install gdown
       run: pip install gdown
 
-    - name: Download Windows 11 ISO from Google Drive
+    - name: Download Windows 11 ISO
       run: |
         mkdir iso
         gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
@@ -23,39 +23,26 @@ jobs:
     - name: Clone tiny11builder
       run: git clone https://github.com/ntdevlabs/tiny11builder.git
 
-    - name: Mount ISO, convert WIM → ESD, build Tiny11
+    - name: Mount ISO and build Tiny11
       shell: powershell
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
 
         # Mount ISO
-        $mount = Mount-DiskImage -ImagePath "$PWD\iso\Win11.iso" -PassThru
-        Start-Sleep -Seconds 5
-        $drive = ($mount | Get-Volume).DriveLetter
+        $isoPath = "$PWD\iso\Win11.iso"
+        $disk = Mount-DiskImage -ImagePath $isoPath -PassThru
+        Start-Sleep 5
+        $drive = ($disk | Get-Volume).DriveLetter
         Write-Host "ISO mounted at drive $drive"
 
-        # Copy ISO contents
-        robocopy "$drive`:\" "$PWD\win11" /E
-
-        # Convert install.wim → install.esd if needed
-        $wimPath = "$PWD\win11\sources\install.wim"
-        $esdPath = "$PWD\win11\sources\install.esd"
-
-        if (Test-Path $wimPath) {
-          Write-Host "Converting install.wim to install.esd"
-          dism /Export-Image /SourceImageFile:$wimPath /SourceIndex:1 /DestinationImageFile:$esdPath /Compress:recovery
-          Remove-Item $wimPath -Force
-        }
-
-        # Run tiny11maker
+        # Run tiny11maker EXACTLY as designed
         cd tiny11builder
-        echo 1`nY`nY | .\tiny11maker.ps1 "$PWD\..\win11"
+
+        # Auto-select Windows 11 Pro (usually index 6, but script handles this)
+        echo 6`nY`nY | .\tiny11maker.ps1 $drive
 
         # Dismount ISO
-        Dismount-DiskImage -ImagePath "$PWD\..\iso\Win11.iso"
-
-    - name: List output ISO
-      run: dir tiny11builder
+        Dismount-DiskImage -ImagePath $isoPath
 
     - name: Upload Tiny11 ISO
       uses: actions/upload-artifact@v4
