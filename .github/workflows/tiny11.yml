@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Checkout
+    - name: Checkout repository
       uses: actions/checkout@v4
 
     - name: Install gdown
@@ -20,32 +20,24 @@ jobs:
         mkdir iso
         gdown --fuzzy "https://drive.google.com/file/d/1p2frwjd8HsHbTg4WZL-c2GMYMHrtkHXC/view" -O iso/Win11.iso
 
-    - name: Clone tiny11builder
-      run: git clone https://github.com/ntdevlabs/tiny11builder.git
-
-    - name: Mount ISO and build Tiny11
+    - name: Mount ISO and run patched tiny11maker
       shell: powershell
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
 
-        # Mount ISO
         $isoPath = "$PWD\iso\Win11.iso"
         $disk = Mount-DiskImage -ImagePath $isoPath -PassThru
         Start-Sleep 5
         $drive = ($disk | Get-Volume).DriveLetter
         Write-Host "ISO mounted at drive $drive"
 
-        # Run tiny11maker EXACTLY as designed
-        cd tiny11builder
-
-        # Auto-select Windows 11 Pro (usually index 6, but script handles this)
+        # Run patched script (Windows Pro usually index 6)
         echo 6`nY`nY | .\tiny11maker.ps1 $drive
 
-        # Dismount ISO
         Dismount-DiskImage -ImagePath $isoPath
 
     - name: Upload Tiny11 ISO
       uses: actions/upload-artifact@v4
       with:
         name: Tiny11-ISO
-        path: tiny11builder\*.iso
+        path: "*.iso"
